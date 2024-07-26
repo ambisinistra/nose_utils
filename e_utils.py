@@ -6,6 +6,7 @@ import pandas as pd
 
 from datetime import timedelta
 
+D_columns = ["D" + str(i) for i in range(1, 65)]
 
 def process_file(file_path, is_train=True):
     with open(file_path, 'r') as file:
@@ -55,8 +56,6 @@ def process_directory(dir_name, is_train=True):
 
     combined_df = pd.concat(all_data, ignore_index=True)
 
-    D_columns = ["D" + str(i) for i in range(1, 65)]
-
     combined_df.rename(inplace=True, columns=dict(zip([" D" + str(i) for i in range(1, 65)], D_columns)))
 
     for col in D_columns:
@@ -89,7 +88,7 @@ def time_processing(df, time_column="Timestamp",
 
     return df
 
-def resample_sensors(df, sample_time="2s", last_idx=840, return_np=False,
+def resample_sensors(df, sample_time="1s", last_idx=840, return_np=False,
                      pat_col="Patient_Id", time_col="Timestamp", warn=True):
     
     coef = int(sample_time[:-1])
@@ -98,7 +97,6 @@ def resample_sensors(df, sample_time="2s", last_idx=840, return_np=False,
         warnings.warn("right indexing for non seconds not implemented")
         warnings.warn("Warning, this function drop nonsensor columns")
     resampled_df = list()
-    D_columns = ["D" + str(i) for i in range(1, 65)]
     patient_ids = df[pat_col].unique().tolist()
     for pat_id in patient_ids:
         cur_patient = df[df[pat_col] == pat_id]
@@ -115,4 +113,37 @@ def normalize_patient(df):
     return (df - df.mean()) / deviation
 
 def normalize_sensors(df, pat_col="Patient_Id", time_col="Timestamp"):
-    return df.groupby(pat_col).apply(normalize_patient).reset_index().set_index(time_col)       
+    return df.groupby(pat_col).apply(normalize_patient).reset_index().set_index(time_col) 
+
+def unpack_dict(nested_dict):
+    flat_dict = {}
+    for outer_key, outer_value in nested_dict.items():
+        for inner_key, inner_dict in outer_value.items():
+            for stat_key, stat_value in inner_dict.items():
+                new_key = f"{inner_key} {outer_key} {stat_key}"
+                flat_dict[new_key] = stat_value
+    return flat_dict
+
+def extract_feature_timeline(timeline, features=None):
+    output = dict()
+    for feature in features:
+        if feature == "min":
+            output["min"] = timeline.min()
+        if feature == "max":
+            output["max"] = timeline.max()
+        if feature == "mean":
+            output["mean"] = timeline.mean()
+    return output
+
+def extract_feature_windows(df, windows=None):
+    output = dict()
+    features = ["min", "max", "mean"]
+    for key in windows.keys():
+        window_name = str(key) + " " + str(windows[key])
+        time_window = (df.index >= timedelta(seconds=key)) & (df.index < timedelta(seconds=windows[key]))
+        output[window_name] = df[time_window].apply(extract_feature_timeline, features=features)
+    return unpack_dict(output)
+
+def extract_feature_sensors(df, pat_col="Patient_Id", sensors=D_columns, windows=None):
+    output = df.groupby(pat_col)[sensors].apply(extract_feature_windows, windows=windows)
+    return output.apply(pd.Series)
